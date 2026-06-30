@@ -3,4 +3,4 @@ flask-cors==4.0.0
 opencv-python-headless==4.9.0.80
 numpy==1.26.3
 gunicorn==21.2.0
-supabase==2.3.4
+supabase==2.10.0
