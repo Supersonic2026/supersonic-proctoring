@@ -14,6 +14,9 @@ import os
 import secrets
 import requests
 from datetime import datetime, timedelta
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 app = Flask(__name__)
 CORS(app)
@@ -23,6 +26,12 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 SUPABASE_REST = f"{SUPABASE_URL}/rest/v1" if SUPABASE_URL else ""
+# ── EMAIL CONFIG (Microsoft Outlook / Office 365) ──
+SMTP_HOST = "smtp.office365.com"
+SMTP_PORT = 587
+SMTP_USER = os.environ.get("SMTP_USER", "")   # paneri.prajapati@supersonicindia.com
+SMTP_PASS = os.environ.get("SMTP_PASS", "")   # your Outlook password
+
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -71,6 +80,124 @@ def db_health_check():
 # ── FACE DETECTION (OpenCV, free, no external API) ──
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 profile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_profileface.xml')
+
+
+# ============================================================
+# EMAIL SENDING
+# ============================================================
+
+def send_email(to_email, to_name, role, company, invite_link, expiry_days=3):
+    """Send assessment invitation email via Microsoft Outlook SMTP."""
+    if not SMTP_USER or not SMTP_PASS:
+        return False, "Email not configured — set SMTP_USER and SMTP_PASS in Render environment"
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f"Assessment Invitation — {role} | {company}"
+        msg['From'] = f"HR Team — {company} <{SMTP_USER}>"
+        msg['To'] = to_email
+
+        # Plain text version
+        text_body = f"""Hi {to_name},
+
+You have been invited to complete an online assessment for the role of {role} at {company}.
+
+Click the link below to begin your assessment:
+{invite_link}
+
+Important:
+- The assessment takes approximately 30 minutes
+- You will need a working webcam (proctored)
+- This link expires in {expiry_days} days
+- Do not share this link with anyone
+
+If you have any questions, reply to this email.
+
+Best regards,
+HR Team
+{company}
+"""
+
+        # HTML version
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F9FAFB;margin:0;padding:0">
+  <div style="max-width:560px;margin:40px auto;background:#fff;border-radius:12px;border:1px solid #E5E7EB;overflow:hidden">
+    <div style="background:#0a4d8c;padding:28px 32px">
+      <h1 style="color:#fff;font-size:20px;font-weight:700;margin:0">{company}</h1>
+      <p style="color:rgba(255,255,255,.6);font-size:13px;margin:4px 0 0">Assessment Invitation</p>
+    </div>
+    <div style="padding:32px">
+      <p style="font-size:15px;color:#374151;margin-bottom:16px">Hi <strong>{to_name}</strong>,</p>
+      <p style="font-size:14px;color:#6B7280;line-height:1.6;margin-bottom:20px">
+        You have been invited to complete an online assessment for the role of 
+        <strong style="color:#111827">{role}</strong> at <strong style="color:#111827">{company}</strong>.
+      </p>
+      <div style="background:#F3F4F6;border-radius:8px;padding:16px;margin-bottom:24px">
+        <p style="font-size:13px;font-weight:600;color:#374151;margin:0 0 8px">Before you begin:</p>
+        <p style="font-size:13px;color:#6B7280;margin:4px 0">&#128247; Working webcam required (proctored)</p>
+        <p style="font-size:13px;color:#6B7280;margin:4px 0">&#9201; Takes approximately 30 minutes</p>
+        <p style="font-size:13px;color:#6B7280;margin:4px 0">&#128279; Link expires in {expiry_days} days</p>
+        <p style="font-size:13px;color:#6B7280;margin:4px 0">&#128683; Do not share this link</p>
+      </div>
+      <a href="{invite_link}" 
+         style="display:block;background:#E8541C;color:#fff;text-decoration:none;padding:14px 24px;border-radius:8px;font-size:15px;font-weight:700;text-align:center;margin-bottom:24px">
+        Start Assessment &#8594;
+      </a>
+      <p style="font-size:12px;color:#9CA3AF;line-height:1.6">
+        If the button doesn't work, copy and paste this link into your browser:<br>
+        <span style="color:#6B7280;word-break:break-all">{invite_link}</span>
+      </p>
+    </div>
+    <div style="background:#F9FAFB;border-top:1px solid #E5E7EB;padding:16px 32px">
+      <p style="font-size:12px;color:#9CA3AF;margin:0">
+        This invitation was sent by the HR team at {company}. 
+        Reply to this email if you have any questions.
+      </p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+        msg.attach(MIMEText(text_body, 'plain'))
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_USER, to_email, msg.as_string())
+
+        return True, "Email sent successfully"
+
+    except smtplib.SMTPAuthenticationError:
+        return False, "Email authentication failed — check SMTP_USER and SMTP_PASS in Render environment"
+    except Exception as e:
+        return False, f"Email error: {str(e)}"
+
+
+@app.route('/api/send-invite', methods=['POST'])
+def send_invite():
+    """HR sends an assessment invitation email to a candidate."""
+    try:
+        data = request.json
+        to_email = data.get('email', '').strip()
+        to_name = data.get('name', 'Candidate').strip()
+        role = data.get('role', '')
+        company = data.get('company', 'Supersonic')
+        invite_link = data.get('invite_link', '')
+
+        if not to_email or not invite_link:
+            return jsonify({"success": False, "error": "Email and invite link are required"}), 400
+
+        success, message = send_email(to_email, to_name, role, company, invite_link)
+
+        return jsonify({"success": success, "message": message})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/')
